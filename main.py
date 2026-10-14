@@ -1,14 +1,18 @@
 
 from fastapi import Depends, FastAPI, HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+from datetime import date
 
 from database import engine
-from models import Customer, Invoice
+from models import Customer, Invoice, Payment
 from schemas import (
     CustomerCreate,
     CustomerResponse,
     InvoiceCreate,
     InvoiceResponse,
+    PaymentCreate,
+    PaymentResponse,
 )
 
 app = FastAPI(title="CashFlow Sentinel API")
@@ -118,3 +122,105 @@ def create_invoice(
 def list_invoices(db: Session = Depends(get_db)):
     return db.query(Invoice).order_by(Invoice.id).all()
 
+@app.post("/payments", response_model=PaymentResponse, status_code=201)
+def create_payment(
+    payment: PaymentCreate,
+    db: Session = Depends(get_db)
+):
+    invoice = db.get(Invoice, payment.invoice_id)
+
+    if invoice is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Invoice not found."
+        )
+
+    total_paid = (
+        db.query(func.coalesce(func.sum(Payment.amount), 0))
+        .filter(Payment.invoice_id == payment.invoice_id)
+        .scalar()
+    )
+
+    remaining_balance = invoice.amount - total_paid
+
+    if payment.amount > remaining_balance:
+        raise HTTPException(
+            status_code=422,
+            detail="Payment exceeds the remaining invoice balance."
+        )
+
+    new_payment = Payment(**payment.model_dump())
+
+    db.add(new_payment)
+    db.commit()
+    db.refresh(new_payment)
+
+    return new_payment
+@app.get("/invoices/{invoice_id}/balance")
+def get_invoice_balance(
+    invoice_id: int,
+    db: Session = Depends(get_db)
+):
+    invoice = db.get(Invoice, invoice_id)
+
+    if invoice is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Invoice not found."
+        )
+
+    total_paid = (
+        db.query(func.coalesce(func.sum(Payment.amount), 0))
+        .filter(Payment.invoice_id == invoice_id)
+        .scalar()
+    )
+
+    balance = invoice.amount - total_paid
+
+    if balance == 0:
+        status = "paid"
+    elif total_paid > 0:
+        status = "partially_paid"
+    else:
+        status = "unpaid"
+
+    return {
+        "invoice_id": invoice.id,
+        "invoice_number": invoice.invoice_number,
+        "invoice_amount": invoice.amount,
+        "total_paid": total_paid,
+        "remaining_balance": balance,
+        "status": status
+    }
+@app.get("/invoices/overdue")
+def list_overdue_invoices(db: Session = Depends(get_db)):
+    today = date.today()
+    invoices = (
+        db.query(Invoice)
+        .filter(Invoice.due_date < today)
+        .order_by(Invoice.due_date)
+        .all()
+    )
+
+    overdue_invoices = []
+
+    for invoice in invoices:
+        total_paid = (
+            db.query(func.coalesce(func.sum(Payment.amount), 0))
+            .filter(Payment.invoice_id == invoice.id)
+            .scalar()
+        )
+
+        balance = invoice.amount - total_paid
+
+        if balance > 0:
+            overdue_invoices.append({
+                "invoice_id": invoice.id,
+                "invoice_number": invoice.invoice_number,
+                "customer_id": invoice.customer_id,
+                "due_date": invoice.due_date,
+                "remaining_balance": balance,
+                "days_overdue": (today - invoice.due_date).days
+            })
+
+    return overdue_invoices

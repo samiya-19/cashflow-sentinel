@@ -1,5 +1,5 @@
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -39,3 +39,18 @@ class InvoiceResponse(BaseModel):
     amount: Decimal
     issue_date: date
     due_date: date
+
+class PaymentCreate(BaseModel):
+    invoice_id: int = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    payment_date: date
+
+
+class PaymentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    invoice_id: int
+    amount: Decimal
+    payment_date: date
+    recorded_at: datetime

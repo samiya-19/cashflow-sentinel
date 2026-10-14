@@ -3,7 +3,7 @@ from logging.config import fileConfig
 
 from alembic import context
 from database import engine
-from models import Base, Customer, Invoice
+from models import Base, Customer, Invoice, Payment
 
 config = context.config
 
